@@ -9,11 +9,11 @@
 //!];
 //!```
 
+use thiserror::Error;
+
 pub const VALUE_TERMINATOR: u8 = 0xFF;
 pub const ROW_TERMINATOR: u8 = 0xFD;
 pub const NULL_VALUE: u8 = 0xFE;
-
-pub type Res<T> = Result<T, Box<dyn std::error::Error>>;
 
 pub fn encode_rsv<T: ToString>(rows: &[Vec<Option<T>>]) -> Vec<u8> {
     rows.iter().fold(vec![], |mut result, row| {
@@ -34,46 +34,56 @@ pub fn encode_rsv<T: ToString>(rows: &[Vec<Option<T>>]) -> Vec<u8> {
     })
 }
 
-pub fn decode_rsv(bytes: &[u8]) -> Res<Vec<Vec<Option<String>>>> {
-    //Check for valid end charecter in RSV input
-    if !bytes.is_empty() && bytes.last() != Some(&ROW_TERMINATOR) {
-        return Err("Incomplete RSV document".into());
+#[derive(Debug, Error)]
+pub enum DecodeRSVErrors {
+    #[error("The RSV file ends unexpectedly!")]
+    IncompleteRSVDocument,
+    #[error("The RSV row on byte number `{0}` ends unexpectedly!")]
+    IncompleteRSVRow(usize),
+    #[error("Invalid UTF-8 byte sequence: {0:?}!")]
+    InvalidStringValue(#[from] std::string::FromUtf8Error),
+}
+
+pub fn decode_rsv(bytes: &[u8]) -> Result<Vec<Vec<Option<String>>>, DecodeRSVErrors> {
+    if bytes.last() != Some(&ROW_TERMINATOR) {
+        Err(DecodeRSVErrors::IncompleteRSVDocument)?
     }
 
-    let mut result: Vec<Vec<Option<String>>> = Vec::new();
-    let mut current_row: Vec<Option<String>> = Vec::new();
+    let mut result: Vec<Vec<Option<String>>> = vec![];
+    let mut current_row: Vec<Option<String>> = vec![];
     let mut value_start_index = 0;
 
     for i in 0..bytes.len() {
-        if bytes[i] == VALUE_TERMINATOR {
-            let length = i - value_start_index;
+        match bytes[i] {
+            VALUE_TERMINATOR => {
+                let length = i - value_start_index;
 
-            if length == 0 {
-                current_row.push(Some(String::new()));
-            } else if length == 1 && bytes[value_start_index] == NULL_VALUE {
-                current_row.push(None);
-            } else {
-                let value_bytes = bytes[value_start_index..i].to_vec();
-
-                if let Ok(str_value) = String::from_utf8(value_bytes) {
-                    current_row.push(Some(str_value));
-                } else {
-                    return Err("Invalid string value".into());
+                match (length, bytes[value_start_index]) {
+                    (0, _) => current_row.push(Some(String::new())),
+                    (1, NULL_VALUE) => current_row.push(None),
+                    (_, _) => {
+                        let value_bytes = bytes[value_start_index..i].to_vec();
+                        match String::from_utf8(value_bytes) {
+                            Ok(str_value) => current_row.push(Some(str_value)),
+                            Err(err) => Err(DecodeRSVErrors::InvalidStringValue(err))?,
+                        }
+                    }
                 }
-            }
 
-            value_start_index = i + 1;
-        } else if bytes[i] == ROW_TERMINATOR {
-            if i > 0 && value_start_index != i {
-                return Err("Incomplete RSV row".into());
+                value_start_index = i + 1;
             }
+            ROW_TERMINATOR => {
+                if i > 0 && value_start_index != i {
+                    Err(DecodeRSVErrors::IncompleteRSVRow(i + 1))?
+                }
 
-            result.push(current_row);
-            current_row = Vec::new();
-            value_start_index = i + 1;
+                result.push(current_row);
+                current_row = Vec::new();
+                value_start_index = i + 1;
+            }
+            _ => {}
         }
     }
 
-    //Return table
     Ok(result)
 }

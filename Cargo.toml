@@ -10,3 +10,4 @@ repository = "https://github.com/Logan-010/rsv-data"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+thiserror = "1.0.56"

@@ -31,7 +31,10 @@
 //!data.save().unwrap();
 //!```
 
-use std::io::{Read, Write};
+use core::DecodeRSVErrors;
+use std::io::{self, Read, Write};
+
+use thiserror::Error;
 
 pub mod core;
 
@@ -41,8 +44,16 @@ pub struct Rsv {
     data: Vec<Vec<Option<String>>>,
 }
 
+#[derive(Debug, Error)]
+pub enum OpenRsvFileErrors {
+    #[error("An I/O error has occurred!")]
+    IOError(#[from] io::Error),
+    #[error("An error has occurred decoding the file!")]
+    DecodingError(#[from] DecodeRSVErrors),
+}
+
 impl Rsv {
-    pub fn create(file_name: &str) -> core::Res<Self> {
+    pub fn create(file_name: &str) -> Result<Rsv, io::Error> {
         let mut file = std::fs::File::create(file_name)?;
         //Adding valid end byte
         let byte = [0xFD];
@@ -54,7 +65,7 @@ impl Rsv {
         })
     }
 
-    pub fn open(file_name: &str) -> core::Res<Self> {
+    pub fn open(file_name: &str) -> Result<Rsv, OpenRsvFileErrors> {
         let mut file = std::fs::File::open(file_name)?;
         let mut bytes = vec![];
         file.read_to_end(&mut bytes)?;
@@ -67,7 +78,7 @@ impl Rsv {
         })
     }
 
-    pub fn save(&self) -> core::Res<()> {
+    pub fn save(&self) -> Result<(), io::Error> {
         let mut file = std::fs::File::open(&self.file)?;
         file.write_all(&core::encode_rsv(&self.data))?;
 
